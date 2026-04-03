@@ -1,12 +1,15 @@
 import audioop
 import os
 import random
+import subprocess
 import unittest
 
 import ffmpeg
 import imageio_ffmpeg
 import numpy as np
 import pyaudio
+
+from sdp import Codec
 
 ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
 # Contains an ffmpeg binary so it works regardless if user has ffmpeg on the system
@@ -24,65 +27,54 @@ os.environ["PATH"] = os.path.dirname(ffmpeg_path) + os.pathsep + os.environ["PAT
 
 # ONLY USE G.711 FOR PURE VOICE AUDIO
 
-CODECS = {
-    "PCMU": {
-        "ffmpeg": {"format": "mulaw", "ar": 8000, "ac": 1},
-        "payload_type": 0,
-        "bytes_per_sample": 1,
-    },
-    "PCMA": {
-        "ffmpeg": {"format": "alaw", "ar": 8000, "ac": 1},
-        "payload_type": 0,
-        "bytes_per_sample": 1,
-    },
-    "L16_1": {
-        "ffmpeg": {"format": "s16le", "ar": 44100, "ac": 1},
-        "payload_type": 11,
-        "bytes_per_sample": 2,
-    },
-    "L16_2": {
-        "ffmpeg": {"format": "s16le", "ar": 44100, "ac": 2},
-        "payload_type": 10,
-        "bytes_per_sample": 2,
-    },
-}
 
-def convert_codec(file_path, codec):
-    target = CODECS.get(codec, CODECS["L16_2"])
-    ffmpeg_args = target["ffmpeg"]
-    # Default to L16_2
-
+def convert_codec(file_path: str, target: Codec):
     output, _ = (
         ffmpeg.input(file_path)
-        .output("pipe:", ffmpeg_args)
+        .output("pipe:", target.ffmpeg_args)
         .run(capture_stdout=True, capture_stderr=True)
     )
 
-    samples_per_chunk = int(0.02 * ffmpeg_args["ar"])
+    samples_per_chunk = int(0.02 * target.ar)
     # 20 ms chunks, formula is 20 ms * target codec sampling rate
-    payload_type = target["payload_type"]
 
-    return output, samples_per_chunk, payload_type
+    return output, samples_per_chunk
     # Converts any .wav file to the target format so it can be sent using the protocol
-    # Also returns the calculated samples per chunk and payload type for use in the protocol
+    # Also returns the calculated samples per chunk for use in the protocol
     # The samples per chunk is the value we increase the timestamp by
     # TODO test with run_async if the conversion time is noticeable startup delay
     # This fully converts the file with ffmpeg before beginning to send
 
+
+"""
+SDP includes:
+    o The type of media (video, audio, etc)
+    o The transport protocol (RTP/UDP/IP, H.320, etc)
+    o The format of the media (H.261 video, MPEG video, etc)
+
+For an IP unicast session, the following are conveyed:
+    o Remote address for media
+    o Transport port for contact address
+"""
+
+
 class TestSender(unittest.TestCase):
     def test_play_L16_2(self):
-        test_codec = "L16_2"
+        test_codec = Codec.L16_STEREO
         process = (
             ffmpeg.input("test.wav")
-            .output("pipe:", **CODECS[test_codec]["ffmpeg"])
-            .run_async(pipe_stdout=True, pipe_stderr=True)
+            .output("pipe:", **test_codec.ffmpeg_args)
+            .global_args("-nostdin")
+            .global_args("-loglevel", "error")
+            .run_async(pipe_stdout=True)
         )
 
         p = pyaudio.PyAudio()
-        stream = p.open(format=pyaudio.paInt16, channels=2, rate=44100, output=True)
-        CHUNK_SIZE = int(0.02 * 44100) * CODECS[test_codec]["bytes_per_sample"]
+        stream = p.open(**test_codec.pyaudio_args)
+        chunk_size = int(0.02 * 44100) * test_codec.bytes_per_sample
+
         while True:
-            chunk = process.stdout.read(CHUNK_SIZE)
+            chunk = process.stdout.read(chunk_size)
             if not chunk:
                 break
 
@@ -99,28 +91,24 @@ class TestSender(unittest.TestCase):
         p.terminate()
 
     def test_play_PCMA(self):
-        test_codec = "PCMA"
+        test_codec = Codec.PCMA
         process = (
             ffmpeg.input("test_s.wav")
-            .output("pipe:", **CODECS[test_codec]["ffmpeg"])
-            .run_async(pipe_stdout=True, pipe_stderr=True)
+            .output("pipe:", **test_codec.ffmpeg_args)
+            .global_args("-nostdin")
+            .global_args("-loglevel", "error")
+            .run_async(pipe_stdout=True)
         )
 
         p = pyaudio.PyAudio()
-        stream = p.open(format=pyaudio.paInt16, channels=1, rate=8000, output=True)
-        CHUNK_SIZE = int(0.02 * 8000) * CODECS[test_codec]["bytes_per_sample"]
+        stream = p.open(**test_codec.pyaudio_args)
+        chunk_size = int(0.02 * 8000) * test_codec.bytes_per_sample
+
         while True:
-            chunk = process.stdout.read(CHUNK_SIZE)
+            chunk = process.stdout.read(chunk_size)
             if not chunk:
                 break
-
-            big_endian = np.frombuffer(chunk, dtype="<i2").byteswap().tobytes()
-            # Converts it to big endian (should be big endian when sent over the protocol)
-
-            little_endian = np.frombuffer(big_endian, dtype=">i2").byteswap().tobytes()
-            # Converts to little endian (the receiver should convert to little endian for proper playback)
-
-            converted = audioop.alaw2lin(little_endian, 2)
+            converted = audioop.alaw2lin(chunk, 2)
             # PYAUDIO ONLY SUPPORTS PCM, WE GOTTA CONVERT G.711 USING AUDIOOP FOR PROPER PLAYBACK
             # alaw2lin for PCMA, ulaw2lin for PCMU
             stream.write(converted)
