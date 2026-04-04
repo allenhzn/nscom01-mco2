@@ -1,14 +1,6 @@
 class Message:
-    def __init__(self, max_forwards: int, call_id: str, 
-                 to: str, frm: str, via: str, cseq: int):
-        self.max_forwards = max_forwards
-        self.call_id = call_id
-        self.to = to
-        self.frm = frm
-        self.via = via
-        # sequence number
-        self.cseq = cseq
-
+    def __init__(self):
+       pass
 
     def to_string(self) -> str:
 
@@ -47,8 +39,19 @@ class Message:
                 
         return tempDict
 
+class Sip_Message(Message):
+    def __init__(self, max_forwards: int, call_id: str, 
+                 to: str, frm: str, via: str, cseq: int):
+        self.max_forwards = max_forwards
+        self.call_id = call_id
+        self.to = to
+        self.frm = frm
+        self.via = via
+        # sequence number
+        self.cseq = cseq
+
 # class that makes the invite messages
-class Invite(Message):
+class Invite(Sip_Message):
     def __init__(self, client_addr: str, client_port: int, codec_choices: list[int],
                     max_forwards: int, call_id: str, 
                     to: str, frm: str, via: str, cseq: int):
@@ -57,7 +60,7 @@ class Invite(Message):
         self.sdp = f'client_addr: {client_addr}\nclient_port: {client_port}\ncodec_choices: {codec_choices}'
 
 # class that makes the ok messages
-class Ok(Message):
+class Ok(Sip_Message):
     def __init__(self,  server_addr: str, server_port: int, codec_choice: int,
                     max_forwards: int, call_id: str, 
                     to: str, frm: str, via: str, cseq: int):
@@ -65,22 +68,22 @@ class Ok(Message):
         self.type = '200_OK'
         self.sdp = f'server_addr: {server_addr}\nserver_port: {server_port}\ncodec_choice: {codec_choice}'
 
-# class that makes the ack messages
-class Ack(Message):
-    def __init__(self, max_forwards: int, call_id: str, 
-                 to: str, frm: str, via: str, cseq: int):
-        super().__init__(max_forwards, call_id, to, frm, via, cseq)
-        self.type = 'ACK'
-
-# class that makes the ack messages
-class Sip_Ack(Message):
+# class that makes the response to 200 OK after Invite
+class Sip_Ack(Sip_Message):
     def __init__(self, max_forwards: int, call_id: str, 
                  to: str, frm: str, via: str, cseq: int):
         super().__init__(max_forwards, call_id, to, frm, via, cseq)
         self.type = 'SIP_ACK'
 
+# class that makes the ack messages
+class Ack(Sip_Message):
+    def __init__(self, max_forwards: int, call_id: str, 
+                 to: str, frm: str, via: str, cseq: int):
+        super().__init__(max_forwards, call_id, to, frm, via, cseq)
+        self.type = 'ACK'
+
 # class that makes the bye messages
-class Bye(Message):
+class Bye(Sip_Message):
     def __init__(self, max_forwards: int, call_id: str, 
                  to: str, frm: str, via: str, cseq: int):
         super().__init__(max_forwards, call_id, to, frm, via, cseq)
