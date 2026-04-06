@@ -1,6 +1,9 @@
 import socket
 import time
 
+import ffmpeg
+import imageio_ffmpeg
+
 from rtp_sender import Sender
 from sdp import Codec, parse_sdp
 from sip_messages import Ack, Bye, Invite, Message
@@ -10,14 +13,14 @@ class Client:
     def __init__(
         self,
         client_addr: str,
-        client_port: int,
-        data: bytes,
-        rtp_port: int = 5004,
+        client_sip_port: int,
+        client_rtp_port: int = 5004,
+        file_path: str = None,
     ):
         self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.CLIENT_ADDR = client_addr
-        self.CLIENT_PORT = client_port
-        self.CLIENT_RTP_PORT = rtp_port
+        self.CLIENT_SIP_PORT = client_sip_port
+        self.CLIENT_RTP_PORT = client_rtp_port
         self.SERVER_ADDR = None
         self.SERVER_SIP_PORT = None
         self.SERVER_RTP_PORT = None
@@ -37,16 +40,17 @@ class Client:
         # who its from
         self.FRM = "sip:alice@hereway.com"
         # information about the sender and a branch ID to identify a specific part of the SIP dialog
-        self.VIA_PREFIX = f"SIP/2.0/UDP {client_addr}:{str(client_port)};branch=z9hG4bK"
+        self.VIA_PREFIX = (
+            f"SIP/2.0/UDP {client_addr}:{str(client_sip_port)};branch=z9hG4bK"
+        )
 
+        self.file_path = file_path
         self.cseq = 1
-
-        self.data = data
 
     def start(self):
         try:
             # bind to addr and port
-            self.client_socket.bind((self.CLIENT_ADDR, self.CLIENT_PORT))
+            self.client_socket.bind((self.CLIENT_ADDR, self.CLIENT_SIP_PORT))
             print("TRACE --> binding client socket")
 
             print("TRACE --> client sending invite")
@@ -197,7 +201,9 @@ class Client:
                                         self.FRM,
                                         self.VIA_PREFIX + "sipack",
                                         self.cseq,
-                                    ).to_string().encode(),
+                                    )
+                                    .to_string()
+                                    .encode(),
                                     (self.SERVER_ADDR, self.SERVER_SIP_PORT),
                                 )
                                 self.cseq += 1
@@ -217,8 +223,20 @@ class Client:
                                     self.SERVER_ADDR,
                                     self.SERVER_RTP_PORT,
                                 )
-                                rtp_sender.send(self.data)
-                                # TODO: code where we start sending the audio
+
+                                if self.file_path is not None:
+                                    ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
+                                    data, _ = (
+                                        ffmpeg.input(self.file_path)
+                                        .output("pipe:", **codec.ffmpeg_args)
+                                        .global_args("-nostdin")
+                                        .global_args("-loglevel", "error")
+                                        .run(capture_stdout=True, cmd=ffmpeg_path)
+                                    )
+                                    rtp_sender.send(data)
+                                # Encode and send file over RTP
+                                else:
+                                    pass
 
                                 # send the Bye after audio sending is complete
                                 self.client_socket.sendto(
@@ -229,7 +247,9 @@ class Client:
                                         self.FRM,
                                         self.VIA_PREFIX + "bye",
                                         self.cseq,
-                                    ).to_string().encode(),
+                                    )
+                                    .to_string()
+                                    .encode(),
                                     (self.SERVER_ADDR, self.SERVER_SIP_PORT),
                                 )
 
