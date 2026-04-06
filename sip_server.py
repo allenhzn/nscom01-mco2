@@ -11,14 +11,14 @@ class Server:
     def __init__(
         self,
         server_addr: str,
-        server_port: int,
-        rtp_port: int = 5004,
+        server_sip_port: int,
+        server_rtp_port: int = 5014,
         target_codec: int = None,
     ):
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.SERVER_ADDR = server_addr
-        self.SERVER_PORT = server_port
-        self.SERVER_RTP_PORT = rtp_port
+        self.SERVER_SIP_PORT = server_sip_port
+        self.SERVER_RTP_PORT = server_rtp_port
         self.CLIENT_ADDR = None
         self.CLIENT_PORT = None
         self.CLIENT_RTP_PORT = None
@@ -31,7 +31,7 @@ class Server:
         # who its from
         self.FRM = "sip:bob@domain.com"
         # information about the sender and a branch ID to identify a specific part of the SIP dialog
-        self.VIA_PREFIX = f"SIP/2.0/UDP {server_addr}:{str(server_port)};branch=z9hG4bK"
+        self.VIA_PREFIX = f"SIP/2.0/UDP {server_addr}:{str(server_sip_port)};branch=z9hG4bK"
         self.cseq = 1
 
         self.TARGET_CODEC = target_codec
@@ -45,8 +45,8 @@ class Server:
     def start(self):
         try:
             # bind to addr and port
-            self.server_socket.bind((self.SERVER_ADDR, self.SERVER_PORT))
-            print("TRACE --> binding server socket")
+            self.server_socket.bind((self.SERVER_ADDR, self.SERVER_SIP_PORT))
+            print(f"TRACE --> binding server socket {(self.SERVER_ADDR, self.SERVER_SIP_PORT)}")
 
             # accept messages
             print("TRACE --> server entering receive loop")
@@ -136,7 +136,7 @@ class Server:
 
     def start_rtp_receive(self):
         codec = Codec.from_payload_type(self.NEGOTIATED_CODEC)
-        self.rtp_receiver = Receiver(codec, self.CLIENT_RTP_PORT)
+        self.rtp_receiver = Receiver(codec, self.SERVER_RTP_PORT)
         self.rtp_receiver.start()
 
     # main flow of the protocol on the server side

@@ -51,7 +51,7 @@ class Client:
         try:
             # bind to addr and port
             self.client_socket.bind((self.CLIENT_ADDR, self.CLIENT_SIP_PORT))
-            print("TRACE --> binding client socket")
+            print(f"TRACE --> binding client socket {(self.CLIENT_ADDR, self.CLIENT_SIP_PORT)}")
 
             print("TRACE --> client sending invite")
             self.send_message(
@@ -219,7 +219,7 @@ class Client:
                                 print("Initializing RTP sender...")
                                 rtp_sender = Sender(
                                     codec,
-                                    0,
+                                    self.CLIENT_RTP_PORT,
                                     self.SERVER_ADDR,
                                     self.SERVER_RTP_PORT,
                                 )
