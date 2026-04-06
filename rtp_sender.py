@@ -1,14 +1,17 @@
 import audioop
 import os
 import random
-import subprocess
+import socket
+import time
 import unittest
 
+import bitstruct
 import ffmpeg
 import imageio_ffmpeg
 import numpy as np
 import pyaudio
 
+from rtp_packet import RtpPacket
 from sdp import Codec
 
 ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
@@ -56,6 +59,67 @@ For an IP unicast session, the following are conveyed:
     o Remote address for media
     o Transport port for contact address
 """
+
+
+class Sender:
+    def __init__(self, codec: Codec, port: int, dest_ip: str, dest_port: int):
+        self.CODEC = codec
+        self.port = port
+        self.dest = (dest_ip, dest_port)
+
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.socket.bind(("0.0.0.0", port))
+        self.offset = 0
+        self.SSRC = random.getrandbits(32)
+        self.seq = random.getrandbits(16)
+        self.timestamp = random.getrandbits(32)
+        # Randomize timestamp and seq starting values
+
+        self.CHUNK_SIZE = 0.020
+        self.samples_per_chunk = int(self.CHUNK_SIZE * self.CODEC.ar)
+
+        self.bytes_per_packet = (
+            self.samples_per_chunk * self.CODEC.ac * self.CODEC.bytes_per_sample
+        )
+        # 20 ms chunks, ar is the sampling rate (44100/8000 hz)
+        # Multiply by the number of audio channels and the codec bytes per sample
+
+    def send(self, data: bytes):
+        start = time.perf_counter()
+
+        while self.offset + self.bytes_per_packet <= len(data):
+            chunk = data[self.offset : self.offset + self.bytes_per_packet]
+            # Make the chunk bytes_per_packet sized
+
+            packet = self.create_packet(chunk)
+            self.socket.sendto(packet.as_bytes, self.dest)
+
+            self.offset += self.bytes_per_packet
+            self.seq = (self.seq + 1) % 2**16
+            self.timestamp = (self.timestamp + self.samples_per_chunk) % 2**32
+            # Have to actually guard addition since we have random starting values
+
+            start += self.CHUNK_SIZE
+            sleep_duration = start - time.perf_counter()
+            if sleep_duration > 0:
+                time.sleep(sleep_duration)
+
+    def create_packet(self, chunk: bytes):
+        packet = RtpPacket(
+            version=3,
+            padding=0,
+            extension=0,
+            csrc_count=0,
+            marker=0,
+            payload_type=self.CODEC.payload_type,
+            seq_num=self.seq,
+            timestamp=self.timestamp,
+            ssrc=self.SSRC,
+            data=chunk
+        )
+        # Kwargs just for readability
+
+        return packet
 
 
 class TestSender(unittest.TestCase):

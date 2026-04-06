@@ -1,11 +1,13 @@
-from typing import Final
 
+import bitstruct
 from bitstruct import calcsize
 
 HEADER_FORMAT = "u2b1b1u4b1u7u16u32u32"
 HEADER_SIZE = calcsize(HEADER_FORMAT)
 
-print(HEADER_SIZE) # 96 bits / 12 bytes exactly the same as the RFC
+print(HEADER_SIZE)  # 96 bits / 12 bytes exactly the same as the RFC
+
+FORMAT = bitstruct.compile(HEADER_FORMAT)
 
 """
 HEADER FORMAT: 
@@ -72,10 +74,21 @@ HEADER FORMAT:
 """
 
 
-class RtpMessage:
-    VERSION: Final = 3
-
-    def __init__(self, padding, extension, csrc_count, marker, payload_type, seq_num, timestamp, ssrc):
+class RtpPacket:
+    def __init__(
+        self,
+        version,
+        padding,
+        extension,
+        csrc_count,
+        marker,
+        payload_type,
+        seq_num,
+        timestamp,
+        ssrc,
+        data: bytes,
+    ):
+        self.version = version
         self.padding = padding
         self.extension = extension
         self.csrc_count = csrc_count
@@ -84,4 +97,25 @@ class RtpMessage:
         self.seq_num = seq_num
         self.timestamp = timestamp
         self.ssrc = ssrc
+        self.data = data
 
+    @property
+    def as_bytes(self) -> bytes:
+        return (
+            FORMAT.pack(
+                self.version,
+                self.padding,
+                self.extension,
+                self.csrc_count,
+                self.marker,
+                self.payload_type,
+                self.seq_num,
+                self.timestamp,
+                self.ssrc,
+            )
+            + self.data
+        )
+
+    @staticmethod
+    def from_bytes(data: bytes):
+        return RtpPacket(*FORMAT.unpack_from(data[:12]), data[12:])
