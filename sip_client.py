@@ -269,36 +269,38 @@ class Client:
                                         latest_send = None
 
                                         while True:
-                                            frame = stream.read(
-                                                FRAME_SIZE, exception_on_overflow=False
-                                            )
+                                            try:
+                                                frame = stream.read(
+                                                    FRAME_SIZE, exception_on_overflow=False
+                                                )
 
-                                            mono = audioop.tomono(frame, 2, 0.5, 0.5)
+                                                mono = audioop.tomono(frame, 2, 0.5, 0.5)
 
-                                            if vad.is_speech(mono, MIC_SAMPLE_RATE):
-                                                print("TRACE --> Speech detected")
-                                                now = time.perf_counter()
-                                                if latest_send is not None:
-                                                    elapsed = int(
-                                                        (now - latest_send)
-                                                        * MIC_SAMPLE_RATE
-                                                    )
-                                                    rtp_sender.timestamp = (
-                                                        rtp_sender.timestamp + elapsed
-                                                    ) % 2**32
+                                                if vad.is_speech(mono, MIC_SAMPLE_RATE):
+                                                    print("TRACE --> Speech detected")
+                                                    now = time.perf_counter()
+                                                    if latest_send is not None:
+                                                        elapsed = int(
+                                                            (now - latest_send)
+                                                            * MIC_SAMPLE_RATE
+                                                        )
+                                                        rtp_sender.timestamp = (
+                                                            rtp_sender.timestamp + elapsed
+                                                        ) % 2**32
 
-                                                latest_send = now
-                                                if (
-                                                    codec == Codec.L16_MONO
-                                                    or codec == Codec.PCMA
-                                                    or codec == Codec.PCMU
-                                                ):
-                                                    rtp_sender.send(mono)
-                                                else:
-                                                    rtp_sender.send(frame)
-
-                                            # Only send an RTP packet if vad detects the input as speech
-                                            # Every time it sends, correct the timestamp so that playback stays accurate
+                                                    latest_send = now
+                                                    if (
+                                                        codec == Codec.L16_MONO
+                                                        or codec == Codec.PCMA
+                                                        or codec == Codec.PCMU
+                                                    ):
+                                                        rtp_sender.send(mono)
+                                                    else:
+                                                        rtp_sender.send(frame)
+                                                # Only send an RTP packet if vad detects the input as speech
+                                                # Every time it sends, correct the timestamp so that playback stays accurate
+                                            except KeyboardInterrupt:
+                                                break
                                     finally:
                                         stream.stop_stream()
                                         stream.close()
