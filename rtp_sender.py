@@ -162,7 +162,7 @@ class TestSender(unittest.TestCase):
     def test_play_PCMA(self):
         test_codec = Codec.PCMA
         process = (
-            ffmpeg.input("test_s.wav")
+            ffmpeg.input("test.wav")
             .output("pipe:", **test_codec.ffmpeg_args)
             .global_args("-nostdin")
             .global_args("-loglevel", "error")

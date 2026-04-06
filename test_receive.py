@@ -3,7 +3,7 @@ from rtp_receiver import Receiver
 from sdp import Codec
 
 def test():
-    CODEC = Codec.L16_MONO
+    CODEC = Codec.PCMU
     PORT = 5004
 
     receiver = Receiver(codec=CODEC, port=PORT)

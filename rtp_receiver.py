@@ -82,9 +82,12 @@ class Receiver:
             seq, timestamp, audio = self.buffer.get_nowait()
             if audio is None:
                 audio = self.loss_concealment(frame_count)
+            elif self.CODEC == Codec.PCMA:
+                audio = audioop.alaw2lin(audio, 2)
+            elif self.CODEC == Codec.PCMU:
+                audio = audioop.ulaw2lin(audio, 2)
         except queue.Empty:
             audio = self.loss_concealment(frame_count)
-
         return audio, pyaudio.paContinue
 
     def loss_concealment(self, frame_count):

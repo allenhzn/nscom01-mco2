@@ -1,17 +1,24 @@
 import wave
+import ffmpeg
+
 from rtp_sender import Sender
 from sdp import Codec
 
 def test():
-    CODEC = Codec.L16_MONO
+    CODEC = Codec.PCMU
 
     sender = Sender(codec=CODEC, port=5005, dest_ip='127.0.0.1', dest_port=5004)
 
-    with wave.open('test.wav', 'rb') as wav:
-        raw = wav.readframes(wav.getnframes())
+    data, _ = (
+        ffmpeg.input("test.wav")
+        .output("pipe:", **CODEC.ffmpeg_args)
+        .global_args("-nostdin")
+        .global_args("-loglevel", "error")
+        .run(capture_stdout=True)
+    )
 
-    sender.send(raw)
-    print('done')
+    sender.send(data)
+
 
 if __name__ == '__main__':
     test()
