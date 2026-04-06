@@ -25,3 +25,57 @@ class Codec(Enum):
     @classmethod
     def from_str(cls, string: str):
         return cls[string.upper()]
+
+    @classmethod
+    def from_payload_type(cls, payload_type: int):
+        return next(c for c in cls if c.payload_type == payload_type)
+
+    @property
+    def codec_map(self):
+        name_map = {
+            "PCMU": "PCMU",
+            "PCMA": "PCMA",
+            "L16_MONO": "L16",
+            "L16_STEREO": "L16",
+        }
+        encoding = name_map.get(self.name, self.name)
+        if self.ac > 1:
+            return f"{encoding}/{self.ar}/{self.ac}"
+        return f"{encoding}/{self.ar}"
+    # Returns the name/ar in SDP format
+
+
+def create_sdp(addr: str, rtp_port: int, payload_types: list[int]) -> str:
+    pts = " ".join(str(pt) for pt in payload_types)
+    lines = [
+        "v=0",
+        f"o=- 0 0 IN IP4 {addr}",
+        "s=-",
+        f"c=IN IP4 {addr}",
+        "t=0 0",
+        f"m=audio {rtp_port} RTP/AVP {pts}",
+    ]
+    for pt in payload_types:
+        codec = Codec.from_payload_type(pt)
+        lines.append(f"a=rtpmap:{pt} {codec.codec_map}")
+
+    return "\r\n".join(lines) + "\r\n"
+
+
+def parse_sdp(sdp: str) -> dict:
+    result = {"rtpmap": {}}
+    for line in sdp.strip().splitlines():
+        if line.startswith("c="):
+            # c=IN IP4 127.0.0.1
+            result["addr"] = line.split()[-1]
+        elif line.startswith("m="):
+            # m=audio 5004 RTP/AVP 0 8 11
+            parts = line.split()
+            result["rtp_port"] = int(parts[1])
+            result["payload_types"] = [int(pt) for pt in parts[3:]]
+        elif line.startswith("a=rtpmap:"):
+            # a=rtpmap:0 PCMU/8000
+            rest = line[len("a=rtpmap:"):]
+            pt_str, encoding = rest.split(" ", 1)
+            result["rtpmap"][int(pt_str)] = encoding.strip()
+    return result
