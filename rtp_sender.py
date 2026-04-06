@@ -94,6 +94,7 @@ class Sender:
         # TODO until here
 
     def send(self, data: bytes):
+        self.offset = 0
         start = time.perf_counter()
 
         while self.offset + self.bytes_per_packet <= len(data):
