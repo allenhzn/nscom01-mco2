@@ -2,8 +2,8 @@ import argparse
 
 import ffmpeg
 
-from rtp_sender import Sender
 from sdp import Codec
+from sip_client import Client
 
 CODECS = ["PCMA", "PCMU", "L16_STEREO", "L16_MONO"]
 
@@ -29,6 +29,8 @@ file.add_argument(
     help=f"The audio codec for the .wav file. Options are: {CODECS}",
     choices=CODECS,
 )
+# TODO restructure so data is converted after codec is received from server
+# So this codec arg is no longer necessary
 
 mic = subparsers.add_parser("mic", help="Enable real-time microphone capture")
 args = parser.parse_args()
@@ -43,8 +45,5 @@ if args.command == "file":
         .run(capture_stdout=True)
     )
 
-    sender = Sender(
-        codec=CODEC, port=6001, dest_ip=args.ip, dest_port=args.port
-    )
-
-    sender.send(data)
+    sip_client = Client("0.0.0.0", 5060, data)
+    sip_client.start()

@@ -18,9 +18,6 @@ ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
 # Contains an ffmpeg binary so it works regardless if user has ffmpeg on the system
 # I can't believe this is real
 
-os.environ["PATH"] = os.path.dirname(ffmpeg_path) + os.pathsep + os.environ["PATH"]
-# Patch the path into the os env so ffmpeg-python can use it
-
 # CODECS to support
 # L16 44.1 kHz mono - PT 11, L16 44.1 kHz stereo - PT 10
 
@@ -35,7 +32,7 @@ def convert_codec(file_path: str, target: Codec):
     output, _ = (
         ffmpeg.input(file_path)
         .output("pipe:", target.ffmpeg_args)
-        .run(capture_stdout=True, capture_stderr=True)
+        .run(capture_stdout=True, capture_stderr=True, cmd=ffmpeg_path)
     )
 
     samples_per_chunk = int(0.02 * target.ar)

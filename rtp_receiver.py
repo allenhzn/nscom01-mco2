@@ -10,6 +10,7 @@ import pyaudio
 from rtp_packet import RtpPacket
 from sdp import Codec
 
+
 class Receiver:
     def __init__(self, codec: Codec, port: int):
         self.CODEC = codec
@@ -28,7 +29,9 @@ class Receiver:
 
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.bind(("0.0.0.0", port))
+        self.socket.settimeout(0.5)
 
+        self.stop_flag = threading.Event()
         self.recv_thread = threading.Thread(target=self.recv_loop, daemon=True)
         self.stream = None
         self.playback = pyaudio.PyAudio()
@@ -51,31 +54,36 @@ class Receiver:
         latest_seq = None
         latest_timestamp = None
 
-        while True:
-            data, _ = self.socket.recvfrom(12 + self.bytes_per_packet)
-            # 12 byte header + data bytes
+        while not self.stop_flag.is_set():
+            try:
+                data, _ = self.socket.recvfrom(12 + self.bytes_per_packet)
+                # 12 byte header + data bytes
 
-            packet = RtpPacket.from_bytes(data)
+                packet = RtpPacket.from_bytes(data)
 
-            if packet.payload_type != self.CODEC.payload_type:
+                if packet.payload_type != self.CODEC.payload_type:
+                    continue
+                # Skip unexpected packets
+
+                if latest_seq is not None and packet.seq_num != (latest_seq + 1) % 2**16:
+                    missing_seq = (latest_seq + 1) % 2**16
+                    missing_timestamp = (latest_timestamp + self.samples_per_chunk) % 2**32
+
+                    while missing_seq != packet.seq_num:
+                        self.buffer.put((missing_seq, missing_timestamp, None))
+                        missing_seq = (missing_seq + 1) % 2**16
+                        missing_timestamp = (
+                            missing_timestamp + self.samples_per_chunk
+                        ) % 2**32
+                # Fill missing packets with None markers so they get replaced with silence
+
+                latest_seq = packet.seq_num
+                latest_timestamp = packet.timestamp
+                self.buffer.put((latest_seq, latest_timestamp, self.to_little_endian(packet.data)))
+            except socket.timeout:
                 continue
-            # Skip unexpected packets
-
-            if latest_seq is not None and packet.seq_num != (latest_seq + 1) % 2**16:
-                missing_seq = (latest_seq + 1) % 2**16
-                missing_timestamp = (latest_timestamp + self.samples_per_chunk) % 2**32
-
-                while missing_seq != packet.seq_num:
-                    self.buffer.put((missing_seq, missing_timestamp, None))
-                    missing_seq = (missing_seq + 1) % 2**16
-                    missing_timestamp = (
-                        missing_timestamp + self.samples_per_chunk
-                    ) % 2**32
-            # Fill missing packets with None markers so they get replaced with silence
-
-            latest_seq = packet.seq_num
-            latest_timestamp = packet.timestamp
-            self.buffer.put((latest_seq, latest_timestamp, self.to_little_endian(packet.data)))
+            except OSError:
+                break
 
     def pyaudio_callback(self, in_data, frame_count, time_info, status):
         try:
@@ -97,5 +105,18 @@ class Receiver:
     def to_little_endian(self, data: bytes):
         if self.CODEC.bytes_per_sample == 1:
             return data
-
         return audioop.byteswap(data, self.CODEC.bytes_per_sample)
+
+    def stop(self):
+        self.stop_flag.set()
+
+        if self.recv_thread.is_alive():
+            self.recv_thread.join()
+
+        if self.stream is not None and self.stream.is_active():
+            self.stream.stop_stream()
+            self.stream.close()
+
+        self.playback.terminate()
+
+        self.socket.close()
