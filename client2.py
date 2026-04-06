@@ -19,9 +19,16 @@ file.add_argument(
     choices=CODECS,
 )
 
+mic = subparsers.add_parser("mic", help="Enable real-time microphone capture")
 args = parser.parse_args()
 
 if args.command == "file":
     codec = Codec.from_str(args.codec)
+
     sip_server = Server("0.0.0.0", 5080, target_codec=codec.payload_type)
+    sip_server.start()
+else:
+    sip_server = Server("0.0.0.0", 5080, target_codec=Codec.L16_MONO.payload_type)
+    # Force this codec to work with the mic's high sample rate
+
     sip_server.start()

@@ -1,5 +1,11 @@
+import audioop
 import socket
 import time
+
+import ffmpeg
+import imageio_ffmpeg
+import pyaudio
+import webrtcvad
 
 from rtp_sender import Sender
 from sdp import Codec, parse_sdp
@@ -10,14 +16,15 @@ class Client:
     def __init__(
         self,
         client_addr: str,
-        client_port: int,
-        data: bytes,
-        rtp_port: int = 5004,
+        client_sip_port: int,
+        client_rtp_port: int = 5004,
+        file_path: str = None,
+        mic_index: int = None,
     ):
         self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.CLIENT_ADDR = client_addr
-        self.CLIENT_PORT = client_port
-        self.CLIENT_RTP_PORT = rtp_port
+        self.CLIENT_SIP_PORT = client_sip_port
+        self.CLIENT_RTP_PORT = client_rtp_port
         self.SERVER_ADDR = None
         self.SERVER_SIP_PORT = None
         self.SERVER_RTP_PORT = None
@@ -37,17 +44,21 @@ class Client:
         # who its from
         self.FRM = "sip:alice@hereway.com"
         # information about the sender and a branch ID to identify a specific part of the SIP dialog
-        self.VIA_PREFIX = f"SIP/2.0/UDP {client_addr}:{str(client_port)};branch=z9hG4bK"
+        self.VIA_PREFIX = (
+            f"SIP/2.0/UDP {client_addr}:{str(client_sip_port)};branch=z9hG4bK"
+        )
 
+        self.file_path = file_path
+        self.mic_index = mic_index
         self.cseq = 1
-
-        self.data = data
 
     def start(self):
         try:
             # bind to addr and port
-            self.client_socket.bind((self.CLIENT_ADDR, self.CLIENT_PORT))
-            print("TRACE --> binding client socket")
+            self.client_socket.bind((self.CLIENT_ADDR, self.CLIENT_SIP_PORT))
+            print(
+                f"TRACE --> binding client socket {(self.CLIENT_ADDR, self.CLIENT_SIP_PORT)}"
+            )
 
             print("TRACE --> client sending invite")
             self.send_message(
@@ -197,7 +208,9 @@ class Client:
                                         self.FRM,
                                         self.VIA_PREFIX + "sipack",
                                         self.cseq,
-                                    ).to_string().encode(),
+                                    )
+                                    .to_string()
+                                    .encode(),
                                     (self.SERVER_ADDR, self.SERVER_SIP_PORT),
                                 )
                                 self.cseq += 1
@@ -213,12 +226,83 @@ class Client:
                                 print("Initializing RTP sender...")
                                 rtp_sender = Sender(
                                     codec,
-                                    0,
+                                    self.CLIENT_RTP_PORT,
                                     self.SERVER_ADDR,
                                     self.SERVER_RTP_PORT,
                                 )
-                                rtp_sender.send(self.data)
-                                # TODO: code where we start sending the audio
+
+                                if self.file_path is not None:
+                                    print(
+                                        f"TRACE --> playing audio file {self.file_path}"
+                                    )
+                                    ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
+                                    data, _ = (
+                                        ffmpeg.input(self.file_path)
+                                        .output("pipe:", **codec.ffmpeg_args)
+                                        .global_args("-nostdin")
+                                        .global_args("-loglevel", "error")
+                                        .run(capture_stdout=True, cmd=ffmpeg_path)
+                                    )
+                                    rtp_sender.send(data)
+                                # Encode and send file over RTP
+                                else:
+                                    print("TRACE --> capturing mic")
+                                    MIC_SAMPLE_RATE = (
+                                        48000  # Depends on the mic you have
+                                    )
+                                    FRAME_DURATION = 0.020  # 20 ms
+                                    FRAME_SIZE = int(MIC_SAMPLE_RATE * FRAME_DURATION)
+                                    CHANNELS = 2
+                                    vad = webrtcvad.Vad()
+                                    # vad detects if the mic is actually talking
+
+                                    pa = pyaudio.PyAudio()
+                                    stream = pa.open(
+                                        format=pyaudio.paInt16,
+                                        channels=CHANNELS,
+                                        rate=MIC_SAMPLE_RATE,
+                                        input=True,
+                                        frames_per_buffer=FRAME_SIZE,
+                                        input_device_index=self.mic_index,
+                                    )
+                                    try:
+                                        latest_send = None
+
+                                        while True:
+                                            frame = stream.read(
+                                                FRAME_SIZE, exception_on_overflow=False
+                                            )
+
+                                            mono = audioop.tomono(frame, 2, 0.5, 0.5)
+
+                                            if vad.is_speech(mono, MIC_SAMPLE_RATE):
+                                                print("TRACE --> Speech detected")
+                                                now = time.perf_counter()
+                                                if latest_send is not None:
+                                                    elapsed = int(
+                                                        (now - latest_send)
+                                                        * MIC_SAMPLE_RATE
+                                                    )
+                                                    rtp_sender.timestamp = (
+                                                        rtp_sender.timestamp + elapsed
+                                                    ) % 2**32
+
+                                                latest_send = now
+                                                if (
+                                                    codec == Codec.L16_MONO
+                                                    or codec == Codec.PCMA
+                                                    or codec == Codec.PCMU
+                                                ):
+                                                    rtp_sender.send(mono)
+                                                else:
+                                                    rtp_sender.send(frame)
+
+                                            # Only send an RTP packet if vad detects the input as speech
+                                            # Every time it sends, correct the timestamp so that playback stays accurate
+                                    finally:
+                                        stream.stop_stream()
+                                        stream.close()
+                                        pa.terminate()
 
                                 # send the Bye after audio sending is complete
                                 self.client_socket.sendto(
@@ -229,7 +313,9 @@ class Client:
                                         self.FRM,
                                         self.VIA_PREFIX + "bye",
                                         self.cseq,
-                                    ).to_string().encode(),
+                                    )
+                                    .to_string()
+                                    .encode(),
                                     (self.SERVER_ADDR, self.SERVER_SIP_PORT),
                                 )
 
