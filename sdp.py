@@ -21,3 +21,7 @@ class Codec(Enum):
     @property
     def pyaudio_args(self):
         return { "format": pyaudio.paInt16, "channels": self.ac, "rate": self.ar, "output": True }
+
+    @classmethod
+    def from_str(cls, string: str):
+        return cls[string.upper()]
