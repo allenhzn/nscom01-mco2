@@ -9,11 +9,11 @@ import pyaudio
 
 from rtp_packet import RtpPacket
 from sdp import Codec
-from sip_messages import Rtcp, Message
+from rtcp_packet import RtcpRrPacket, RtcpSrPacket
 
 
 class Receiver:
-    def __init__(self, codec: Codec, port: int):
+    def __init__(self, codec: Codec, port: int, dest_ip: str, dest_port: int):
         self.CODEC = codec
 
         self.CHUNK_SIZE = 0.020
@@ -37,20 +37,19 @@ class Receiver:
         self.stream = None
         self.playback = pyaudio.PyAudio()
 
-        # TODO from here
         self.received_pkt_count = 0
+        self.packets_lost = 0
         self.from_sender_count = 0
         self.rtcp_sckt = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.rtcp_sckt.bind(("0.0.0.0", port + 1))
-        self.rtcp_dest = ("0.0.0.0", port + 2)
-        self.rtcp_recv_thread = threading.Thread(target=self.rtcp_receiver_receive_loop, daemon=True)
-        # TODO until here
+        self.rtcp_dest = (dest_ip, dest_port + 1)
+        self.rtcp_recv_thread = threading.Thread(
+            target=self.rtcp_receiver_receive_loop, daemon=True
+        )
 
     def start(self):
         self.recv_thread.start()
-        # TODO from here
         self.rtcp_recv_thread.start()
-        # TODO until here
 
         while self.buffer.qsize() < self.BUFFER_SIZE:
             time.sleep(0.001)
@@ -66,8 +65,13 @@ class Receiver:
     def recv_loop(self):
         latest_seq = None
         latest_timestamp = None
+        last_rtcp_send_time = time.time()
 
         while not self.stop_flag.is_set():
+            if time.time() - last_rtcp_send_time >= 5.0:
+                self.receiver_report_send()
+                last_rtcp_send_time = time.time()
+
             try:
                 data, _ = self.socket.recvfrom(12 + self.bytes_per_packet)
                 # 12 byte header + data bytes
@@ -78,19 +82,20 @@ class Receiver:
                     continue
                 # Skip unexpected packets
 
-                # TODO from here
                 # increment received packet
                 self.received_pkt_count += 1
 
-                if self.received_pkt_count % 10 == 0:
-                    self.receiver_report_send()
-                # TODO until here
-
-                if latest_seq is not None and packet.seq_num != (latest_seq + 1) % 2**16:
+                if (
+                    latest_seq is not None
+                    and packet.seq_num != (latest_seq + 1) % 2**16
+                ):
                     missing_seq = (latest_seq + 1) % 2**16
-                    missing_timestamp = (latest_timestamp + self.samples_per_chunk) % 2**32
+                    missing_timestamp = (
+                        latest_timestamp + self.samples_per_chunk
+                    ) % 2**32
 
                     while missing_seq != packet.seq_num:
+                        self.packets_lost += 1
                         self.buffer.put((missing_seq, missing_timestamp, None))
                         missing_seq = (missing_seq + 1) % 2**16
                         missing_timestamp = (
@@ -100,48 +105,37 @@ class Receiver:
 
                 latest_seq = packet.seq_num
                 latest_timestamp = packet.timestamp
-                self.buffer.put((latest_seq, latest_timestamp, self.to_little_endian(packet.data)))
+                self.buffer.put(
+                    (latest_seq, latest_timestamp, self.to_little_endian(packet.data))
+                )
             except socket.timeout:
                 continue
             except OSError:
                 break
-    
-    # TODO from here
-    def receiver_report_send(self):
-        message = Rtcp(-1, self.received_pkt_count).to_string()
-        self.rtcp_sckt.sendto(message, self.rtcp_dest)
 
-    def rtcp_receiver_receive(self) -> tuple[dict, tuple[str, int]]:
+    def receiver_report_send(self):
+        packet = RtcpRrPacket(0, self.packets_lost)
+        self.rtcp_sckt.sendto(packet.as_bytes, self.rtcp_dest)
+
+    def rtcp_receiver_receive(self) -> RtcpSrPacket:
         # receive data
         data, addr = self.rtcp_sckt.recvfrom(4096)
-
-        # decode data
-        rec_str = data.decode()
-
         print("TRACE --> client received something")
-        print(rec_str)
+        return RtcpSrPacket.from_bytes(data)
 
-        rec_dict = Message.to_dict(rec_str)
-
-        self.send_ack(int(rec_dict["CSeq"].split()[0]), addr)
-
-        return rec_dict, addr
-    
     def rtcp_receiver_receive_loop(self):
-
         while True:
             try:
-                dataDict, _ = self.rtcp_receiver_receive()
-                self.from_sender_count = dataDict['packets_sent']
-                print('Sender Report:')
-                print(f'[{self.from_sender_count}] packets sent')
-                print(f'[{self.from_sender_count - self.received_pkt_count}] packets lost')
+                packet = self.rtcp_receiver_receive()
+                self.from_sender_count = packet.packet_count
+                print("Sender Report:")
+                print(f"[{self.from_sender_count}] packets sent")
+                print(f"[{self.packets_lost}] packets lost")
 
             except socket.timeout:
                 continue
             except OSError:
                 break
-    # TODO until here
 
     def pyaudio_callback(self, in_data, frame_count, time_info, status):
         try:
@@ -157,7 +151,7 @@ class Receiver:
         return audio, pyaudio.paContinue
 
     def loss_concealment(self, frame_count):
-        return b'\x00' * frame_count * self.CODEC.ac * self.CODEC.bytes_per_sample
+        return b"\x00" * frame_count * self.CODEC.ac * self.CODEC.bytes_per_sample
     # Empty bytes just means silence in case of lost packets
 
     def to_little_endian(self, data: bytes):
@@ -178,6 +172,4 @@ class Receiver:
         self.playback.terminate()
 
         self.socket.close()
-        # TODO from here
         self.rtcp_sckt.close()
-        # TODO until here

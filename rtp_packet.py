@@ -5,7 +5,7 @@ from bitstruct import calcsize
 HEADER_FORMAT = "u2b1b1u4b1u7u16u32u32"
 HEADER_SIZE = calcsize(HEADER_FORMAT)
 
-print(HEADER_SIZE)  # 96 bits / 12 bytes exactly the same as the RFC
+#print(HEADER_SIZE)  96 bits / 12 bytes exactly the same as the RFC
 
 FORMAT = bitstruct.compile(HEADER_FORMAT)
 

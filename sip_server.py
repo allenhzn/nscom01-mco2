@@ -136,7 +136,9 @@ class Server:
 
     def start_rtp_receive(self):
         codec = Codec.from_payload_type(self.NEGOTIATED_CODEC)
-        self.rtp_receiver = Receiver(codec, self.SERVER_RTP_PORT)
+        self.rtp_receiver = Receiver(
+            codec, self.SERVER_RTP_PORT, self.CLIENT_ADDR, self.CLIENT_RTP_PORT
+        )
         self.rtp_receiver.start()
 
     # main flow of the protocol on the server side
