@@ -1,9 +1,13 @@
 import argparse
 
+import imageio_ffmpeg
 import ffmpeg
 
 from sdp import Codec
 from sip_client import Client
+
+
+ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
 
 CODECS = ["PCMA", "PCMU", "L16_STEREO", "L16_MONO"]
 
@@ -42,7 +46,7 @@ if args.command == "file":
         .output("pipe:", **CODEC.ffmpeg_args)
         .global_args("-nostdin")
         .global_args("-loglevel", "error")
-        .run(capture_stdout=True)
+        .run(capture_stdout=True, cmd=ffmpeg_path)
     )
 
     sip_client = Client("0.0.0.0", 5060, data)

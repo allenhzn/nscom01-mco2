@@ -4,6 +4,7 @@ import random
 import socket
 import time
 import unittest
+import threading
 
 import bitstruct
 import ffmpeg
@@ -13,6 +14,7 @@ import pyaudio
 
 from rtp_packet import RtpPacket
 from sdp import Codec
+from sip_messages import Rtcp, Message
 
 ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
 # Contains an ffmpeg binary so it works regardless if user has ffmpeg on the system
@@ -81,6 +83,16 @@ class Sender:
         # 20 ms chunks, ar is the sampling rate (44100/8000 hz)
         # Multiply by the number of audio channels and the codec bytes per sample
 
+        # TODO from here
+        self.sent_pkt_count = 0
+        self.from_receiver_count = 0
+        self.rtcp_sckt = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.rtcp_sckt.bind(("0.0.0.0", port + 1))
+        self.rtcp_dest = (dest_ip, dest_port + 1)
+        self.rtcp_recv_thread = threading.Thread(target=self.rtcp_sender_receive_loop, daemon=True)
+        self.rtcp_recv_thread.start()
+        # TODO until here
+
     def send(self, data: bytes):
         start = time.perf_counter()
 
@@ -90,6 +102,14 @@ class Sender:
 
             packet = self.create_packet(self.to_big_endian(chunk))
             self.socket.sendto(packet.as_bytes, self.dest)
+
+            # TODO from here
+            # increment received packet
+            self.sent_pkt_count += 1
+
+            if self.sent_pkt_count % 10 == 0:
+                self.sender_report_send()
+            # TODO until here
 
             self.offset += self.bytes_per_packet
             self.seq = (self.seq + 1) % 2**16
@@ -101,6 +121,44 @@ class Sender:
             if sleep_duration > 0:
                 time.sleep(sleep_duration)
             # Wait for min 20 ms before generating the next chunk
+            
+
+    # TODO from here
+    def sender_report_send(self):
+        message = Rtcp(self.sent_pkt_count, -1).to_string()
+        self.rtcp_sckt.sendto(message, self.rtcp_dest)
+
+    def rtcp_sender_receive(self) -> tuple[dict, tuple[str, int]]:
+        # receive data
+        data, addr = self.rtcp_sckt.recvfrom(4096)
+
+        # decode data
+        rec_str = data.decode()
+
+        print("TRACE --> client received something")
+        print(rec_str)
+
+        rec_dict = Message.to_dict(rec_str)
+
+        self.send_ack(int(rec_dict["CSeq"].split()[0]), addr)
+
+        return rec_dict, addr
+    
+    def rtcp_sender_receive_loop(self):
+
+        while True:
+            try:
+                dataDict, _ = self.rtcp_sender_receive()
+                self.from_receiver_count = dataDict['packets_received']
+                print('Receiver Report:')
+                print(f'[{self.from_receiver_count}] packets received')
+                print(f'[{self.sent_pkt_count - self.from_receiver_count}] packets lost')
+
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+    # TODO until here
 
     def create_packet(self, chunk: bytes):
         packet = RtpPacket(

@@ -189,16 +189,16 @@ class Ok(Sip_Response):
 
 
 class Rtcp(Message):
-    def __init__(self, packets_sent: int, packets_lost: int):
+    def __init__(self, packets_sent: int, packets_received: int):
         self.type = "RTCP"
         self.packets_sent = packets_sent
-        self.packets_lost = packets_lost
+        self.packets_received = packets_received
 
     def to_string(self) -> str:
         lines = [
             f"type: {self.type}",
             f"packets_sent: {self.packets_sent}",
-            f"packets_lost: {self.packets_lost}",
+            f"packets_received: {self.packets_received}",
         ]
         return "\n".join(lines)
 
