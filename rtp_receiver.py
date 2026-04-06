@@ -1,3 +1,4 @@
+import audioop
 import queue
 import socket
 import threading
@@ -70,10 +71,11 @@ class Receiver:
                     missing_timestamp = (
                         missing_timestamp + self.samples_per_chunk
                     ) % 2**32
+            # Fill missing packets with None markers so they get replaced with silence
 
             latest_seq = packet.seq_num
             latest_timestamp = packet.timestamp
-            self.buffer.put((latest_seq, latest_timestamp, packet.data))
+            self.buffer.put((latest_seq, latest_timestamp, self.to_little_endian(packet.data)))
 
     def pyaudio_callback(self, in_data, frame_count, time_info, status):
         try:
@@ -87,3 +89,10 @@ class Receiver:
 
     def loss_concealment(self, frame_count):
         return b'\x00' * frame_count * self.CODEC.ac * self.CODEC.bytes_per_sample
+    # Empty bytes just means silence in case of lost packets
+
+    def to_little_endian(self, data: bytes):
+        if self.CODEC.bytes_per_sample == 1:
+            return data
+
+        return audioop.byteswap(data, self.CODEC.bytes_per_sample)

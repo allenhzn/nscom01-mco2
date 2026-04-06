@@ -91,7 +91,7 @@ class Sender:
             chunk = data[self.offset : self.offset + self.bytes_per_packet]
             # Make the chunk bytes_per_packet sized
 
-            packet = self.create_packet(chunk)
+            packet = self.create_packet(self.to_big_endian(chunk))
             self.socket.sendto(packet.as_bytes, self.dest)
 
             self.offset += self.bytes_per_packet
@@ -103,6 +103,7 @@ class Sender:
             sleep_duration = start - time.perf_counter()
             if sleep_duration > 0:
                 time.sleep(sleep_duration)
+            # Wait for min 20 ms before generating the next chunk
 
     def create_packet(self, chunk: bytes):
         packet = RtpPacket(
@@ -117,10 +118,14 @@ class Sender:
             ssrc=self.SSRC,
             data=chunk
         )
-        # Kwargs just for readability
-
         return packet
 
+    def to_big_endian(self, data: bytes):
+        if self.CODEC.bytes_per_sample == 1:
+            return data
+        # Endianness doesn't actually matter for PCMA and PCMU since they use 1 byte per sample
+
+        return audioop.byteswap(data, self.CODEC.bytes_per_sample)
 
 class TestSender(unittest.TestCase):
     def test_play_L16_2(self):

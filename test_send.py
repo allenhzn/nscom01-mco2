@@ -3,7 +3,7 @@ from rtp_sender import Sender
 from sdp import Codec
 
 def test():
-    CODEC = Codec.L16_STEREO
+    CODEC = Codec.L16_MONO
 
     sender = Sender(codec=CODEC, port=5005, dest_ip='127.0.0.1', dest_port=5004)
 
