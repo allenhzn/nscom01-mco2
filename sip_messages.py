@@ -1,123 +1,247 @@
+from sdp import create_sdp
+
 class Message:
-    def __init__(self):
-       pass
+    # Parent SIP message class
 
-    def to_string(self) -> str:
-
-        temp_dict = self.__dict__
-
-        result = ''
-
-        # iterate through the key value pairs and add them to the string
-
-        for k, v in temp_dict.items():
-
-            result += f'{k}: {v}\n'
-
-        return result
-    
     @staticmethod
     def to_dict(message: str) -> dict:
-        tempDict = {}
-        
-        if 'sdp:' in message:
-            # split at 'sdp:'
-            parts = message.split('sdp:', 1)
-            # place everything before the sdp inside a temporary string
-            header_section = parts[0]
-            # make everything after the sdp correspond to 'sdp'
-            tempDict['sdp'] = parts[1].strip() 
+        result = {}
+
+        # split headers from body at the blank line
+        if "\r\n\r\n" in message:
+            header_section, body = message.split("\r\n\r\n", 1)
+        elif "\n\n" in message:
+            header_section, body = message.split("\n\n", 1)
         else:
             header_section = message
+            body = ""
 
-        # go through the temporary string and split them at the \n
-        for line in header_section.strip().splitlines():
-            if ':' in line:
-                # split each line at the ':'
-                key, value = line.split(':', 1)
-                tempDict[key.strip()] = value.strip()
-                
-        return tempDict
+        lines = header_section.strip().splitlines()
+        if not lines:
+            return result
 
-class Sip_Message(Message):
-    def __init__(self, max_forwards: int, call_id: str, 
-                 to: str, frm: str, via: str, cseq: int):
+        first = lines[0].strip()
+        if first.startswith("SIP/2.0"):
+            # status-line: SIP/2.0 200 OK
+            parts = first.split(None, 2)
+            result["status_code"] = int(parts[1])
+            result["reason"] = parts[2] if len(parts) > 2 else ""
+        else:
+            # request-line: INVITE sip:bob@domain.com SIP/2.0
+            parts = first.split(None, 2)
+            result["method"] = parts[0]
+
+        for line in lines[1:]:
+            if ":" in line:
+                key, value = line.split(":", 1)
+                result[key.strip()] = value.strip()
+
+        body = body.strip()
+        if body:
+            result["sdp"] = body
+
+        return result
+
+
+class Sip_Request(Message):
+    def __init__(
+        self,
+        method: str,
+        request_uri: str,
+        max_forwards: int,
+        call_id: str,
+        to: str,
+        frm: str,
+        via: str,
+        cseq: int,
+        sdp_body: str = "",
+    ):
+        self.method = method
+        self.request_uri = request_uri
         self.max_forwards = max_forwards
         self.call_id = call_id
         self.to = to
         self.frm = frm
         self.via = via
-        # sequence number
         self.cseq = cseq
+        self.sdp_body = sdp_body
 
-# class that makes the invite messages
-class Invite(Sip_Message):
-    def __init__(self, client_addr: str, client_port: int, codec_choices: list[int],
-                    max_forwards: int, call_id: str, 
-                    to: str, frm: str, via: str, cseq: int):
-        super().__init__(max_forwards, call_id, to, frm, via, cseq)
-        self.type = 'INVITE'
-        self.sdp = f'client_addr: {client_addr}\nclient_port: {client_port}\ncodec_choices: {codec_choices}'
+    def to_string(self) -> str:
+        lines = [
+            f"{self.method} {self.request_uri} SIP/2.0",
+            f"Via: {self.via}",
+            f"Max-Forwards: {self.max_forwards}",
+            f"To: <{self.to}>",
+            f"From: <{self.frm}>",
+            f"Call-ID: {self.call_id}",
+            f"CSeq: {self.cseq} {self.method}",
+        ]
 
-# class that makes the ok messages
-class Ok(Sip_Message):
-    def __init__(self,  server_addr: str, server_port: int, codec_choice: int,
-                    max_forwards: int, call_id: str, 
-                    to: str, frm: str, via: str, cseq: int):
-        super().__init__(max_forwards, call_id, to, frm, via, cseq)
-        self.type = '200_OK'
-        self.sdp = f'server_addr: {server_addr}\nserver_port: {server_port}\ncodec_choice: {codec_choice}'
+        if self.sdp_body:
+            lines.append("Content-Type: application/sdp")
+            lines.append(f"Content-Length: {len(self.sdp_body.encode())}")
+            lines.append("")  # blank line before body
+            lines.append(self.sdp_body)
+        else:
+            lines.append("Content-Length: 0")
+            lines.append("")  # blank line (end of headers)
 
-# class that makes the response to 200 OK after Invite
-class Sip_Ack(Sip_Message):
-    def __init__(self, max_forwards: int, call_id: str, 
-                 to: str, frm: str, via: str, cseq: int):
-        super().__init__(max_forwards, call_id, to, frm, via, cseq)
-        self.type = 'SIP_ACK'
+        return "\r\n".join(lines)
 
-# class that makes the ack messages
-class Ack(Sip_Message):
-    def __init__(self, max_forwards: int, call_id: str, 
-                 to: str, frm: str, via: str, cseq: int):
-        super().__init__(max_forwards, call_id, to, frm, via, cseq)
-        self.type = 'ACK'
 
-# class that makes the bye messages
-class Bye(Sip_Message):
-    def __init__(self, max_forwards: int, call_id: str, 
-                 to: str, frm: str, via: str, cseq: int):
-        super().__init__(max_forwards, call_id, to, frm, via, cseq)
-        self.type = 'BYE'
+class Invite(Sip_Request):
+    def __init__(
+        self,
+        client_addr: str,
+        rtp_port: int,
+        codec_choices: list[int],
+        max_forwards: int,
+        call_id: str,
+        to: str,
+        frm: str,
+        via: str,
+        cseq: int,
+    ):
+        sdp = create_sdp(client_addr, rtp_port, codec_choices)
+        super().__init__("INVITE", to, max_forwards, call_id, to, frm, via, cseq, sdp)
 
-# class that makes RTCP messages
+
+class Ack(Sip_Request):
+    def __init__(
+        self, max_forwards: int, call_id: str, to: str, frm: str, via: str, cseq: int
+    ):
+        super().__init__("ACK", to, max_forwards, call_id, to, frm, via, cseq)
+
+
+class Bye(Sip_Request):
+    def __init__(
+        self, max_forwards: int, call_id: str, to: str, frm: str, via: str, cseq: int
+    ):
+        super().__init__("BYE", to, max_forwards, call_id, to, frm, via, cseq)
+
+
+class Sip_Response(Message):
+    def __init__(
+        self,
+        status_code: int,
+        reason: str,
+        max_forwards: int,
+        call_id: str,
+        to: str,
+        frm: str,
+        via: str,
+        cseq: int,
+        cseq_method: str = "INVITE",
+        sdp_body: str = "",
+    ):
+        self.status_code = status_code
+        self.reason = reason
+        self.max_forwards = max_forwards
+        self.call_id = call_id
+        self.to = to
+        self.frm = frm
+        self.via = via
+        self.cseq = cseq
+        self.cseq_method = cseq_method
+        self.sdp_body = sdp_body
+
+    def to_string(self) -> str:
+        lines = [
+            f"SIP/2.0 {self.status_code} {self.reason}",
+            f"Via: {self.via}",
+            f"Max-Forwards: {self.max_forwards}",
+            f"To: <{self.to}>",
+            f"From: <{self.frm}>",
+            f"Call-ID: {self.call_id}",
+            f"CSeq: {self.cseq} {self.cseq_method}",
+        ]
+
+        if self.sdp_body:
+            lines.append("Content-Type: application/sdp")
+            lines.append(f"Content-Length: {len(self.sdp_body.encode())}")
+            lines.append("")
+            lines.append(self.sdp_body)
+        else:
+            lines.append("Content-Length: 0")
+            lines.append("")
+
+        return "\r\n".join(lines)
+
+
+class Ok(Sip_Response):
+    def __init__(
+        self,
+        server_addr: str,
+        rtp_port: int,
+        codec_choice: int,
+        max_forwards: int,
+        call_id: str,
+        to: str,
+        frm: str,
+        via: str,
+        cseq: int,
+        cseq_method: str = "INVITE",
+    ):
+        sdp = create_sdp(server_addr, rtp_port, [codec_choice])
+        super().__init__(
+            200, "OK", max_forwards, call_id, to, frm, via, cseq, cseq_method, sdp
+        )
+
+
 class Rtcp(Message):
     def __init__(self, packets_sent: int, packets_lost: int):
-        self.type = 'RTCP'
+        self.type = "RTCP"
         self.packets_sent = packets_sent
         self.packets_lost = packets_lost
 
+    def to_string(self) -> str:
+        lines = [
+            f"type: {self.type}",
+            f"packets_sent: {self.packets_sent}",
+            f"packets_lost: {self.packets_lost}",
+        ]
+        return "\n".join(lines)
+
+
 # testing if methods work
-if __name__=='__main__':
+if __name__ == "__main__":
+    inv = Invite(
+        "127.0.0.1",
+        5004,
+        [0, 8],
+        70,
+        "bgtrts@127.0.0.1",
+        "sip:bob@domain.com",
+        "sip:alice@hereway.com",
+        "SIP/2.0/UDP 127.0.0.1:60000;branch=z9hG4bKinvite",
+        1,
+    ).to_string()
 
-    inv = Invite('0.0.0.0', 22, ['uhhe', 'dnjdb'], 1,
-                 'called@lmao', 'bob', 'alice',
-                 'via something', 5).to_string()
-    
+    print("=== INVITE ===")
     print(inv)
+    print()
 
     inv_dict = Message.to_dict(inv)
-
+    print("=== Parsed ===")
     print(inv_dict)
-    """inv = Invite('0.0.0.0', 60000, ['something', 'another thing']).to_string()
-    ok = Ok('0.0.0.0', 60001, 'something').to_string()
-    ack = Ack().to_string()
+    print()
 
-    inv_dict = Message.to_dict(inv)
+    ok = Ok(
+        "127.0.0.1",
+        5004,
+        0,
+        70,
+        "bgtrts@127.0.0.1",
+        "sip:bob@domain.com",
+        "sip:alice@hereway.com",
+        "SIP/2.0/UDP 127.0.0.1:60001;branch=z9hG4bKinvite",
+        1,
+    ).to_string()
+
+    print("=== 200 OK ===")
+    print(ok)
+    print()
+
     ok_dict = Message.to_dict(ok)
-    ack_dict = Message.to_dict(ack)
-
-    client_sdp = Message.to_dict(inv_dict['sdp'])
-    server_sdp = Message.to_dict(ok_dict['sdp'])
-
-    print(f'{client_sdp['client_addr']} | {client_sdp['client_port']} | {client_sdp['codec_choices']}')
-    print(f'{server_sdp['server_addr']} | {server_sdp['server_port']} | {server_sdp['codec_choice']}')"""
+    print("=== Parsed ===")
+    print(ok_dict)
